@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+# Images
+*.bmp
+*.png
+*.gif
+*.jpg
+*.jpeg
+*.svg
