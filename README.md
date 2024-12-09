@@ -1,4 +1,5 @@
-# ECE1747 Team 6 - Parallel Video Processing
+# ECE1747 Team 6 - GPU-Accelerated Video Processing
+Akhil Jarodia (Task A), Ke Liu (Task A), Aravind Narayanan (Task B),  Tanvi Patil (Task C), Gaurav Kashyap (Task D)
 
 ## Overview
 This repository implements GPU-accelerated solutions for various real-time video processing tasks using parallel programming techniques. By leveraging NVIDIA's CUDA, the project demonstrates significant performance improvements across four distinct video processing applications: **Edge Detection**, **Moving Human Detection**, **Video Illustration Effects**, and **Video Stabilization**.
