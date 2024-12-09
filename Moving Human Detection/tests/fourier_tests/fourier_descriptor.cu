@@ -1,13 +1,13 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
-#include <vector>
-#include <complex>
-#include <numeric>
-#include <algorithm>
+#include <cufft.h>
 #include <cmath>
 #include <fstream>
-#include <filesystem>
+#include <vector>
 
+
+
+// Helper function to extract contours using OpenCV
 // Extract the largest contour from a binary image
 std::vector<cv::Point> extractContour(const cv::Mat& binaryImage) {
     std::vector<std::vector<cv::Point>> contours;
@@ -23,6 +23,7 @@ std::vector<cv::Point> extractContour(const cv::Mat& binaryImage) {
             return cv::contourArea(c1) < cv::contourArea(c2);
         });
 }
+
 
 // Resample contour to a fixed number of points
 std::vector<cv::Point2f> resampleContour(const std::vector<cv::Point>& contour, int numPoints) {
@@ -79,8 +80,9 @@ std::vector<float> normalizeDescriptor(const std::vector<std::complex<float>>& d
     return normalized;
 }
 
-// Compute Fourier descriptor for an image path
-std::vector<float> computeFourierDescriptor(const std::string& imagePath, int numPoints = 128) {
+
+// Function to compute Fourier descriptor
+std::vector<float> computeFourierDescriptor_path(const std::string& imagePath, int numPoints = 128) {
     // Load and preprocess the image
     cv::Mat image = cv::imread(imagePath, cv::IMREAD_GRAYSCALE);
     if (image.empty()) {
@@ -124,7 +126,7 @@ std::vector<float> computeFourierDescriptor(const std::string& imagePath, int nu
     return normalizeDescriptor(fftComplex);
 }
 
-// Compute Fourier descriptor from an image matrix
+
 std::vector<float> computeFourierDescriptorFromImage(const cv::Mat& image, int numPoints = 128) {
     // Ensure grayscale
     cv::Mat grayImage;
@@ -170,111 +172,3 @@ std::vector<float> computeFourierDescriptorFromImage(const cv::Mat& image, int n
     // Normalize descriptor
     return normalizeDescriptor(fftComplex);
 }
-
-
-namespace fs = std::filesystem;
-
-// // Function to save descriptors to a file
-void saveDescriptorToFile(const std::vector<float>& descriptor, const std::string& filePath) {
-    std::ofstream outFile(filePath);
-    if (!outFile.is_open()) {
-        throw std::runtime_error("Could not open file to write: " + filePath);
-    }
-    for (size_t i = 0; i < descriptor.size(); ++i) {
-        outFile << descriptor[i];
-        if (i != descriptor.size() - 1) outFile << ",";
-    }
-    outFile << "\n";
-    outFile.close();
-}
-
-// Process all images in a directory
-void processDirectory(const std::string& inputDir, const std::string& outputDir, int numPoints = 128) {
-    for (const auto& entry : fs::recursive_directory_iterator(inputDir)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".png") {
-            try {
-                std::string inputFilePath = entry.path().string();
-                std::string relativePath = fs::relative(entry.path(), inputDir).string();
-                std::string outputFilePath = outputDir + "/" + relativePath + ".csv";
-                
-                // Create output directories if they don't exist
-                fs::create_directories(fs::path(outputFilePath).parent_path());
-
-                // Compute Fourier descriptor
-                auto descriptor = computeFourierDescriptor(inputFilePath, numPoints);
-
-                // Save descriptor to file
-                saveDescriptorToFile(descriptor, outputFilePath);
-
-                std::cout << "Processed: " << inputFilePath << " -> " << outputFilePath << std::endl;
-            } catch (const std::exception& e) {
-                std::cerr << "Error processing file " << entry.path() << ": " << e.what() << std::endl;
-            }
-        }
-    }
-}
-
-int main() {
-    // Input and output directories
-    // std::string inputDir = "/content/data/fourier_data/";
-    std::string inputDir = "/content/collab_backup/combined_steps/bounding_images";
-    
-    std::string outputDir ="/content/collab_backup/combined_steps/bounding_images_cpp/";
-
-    try {
-        // Process the entire directory
-        processDirectory(inputDir, outputDir);
-
-        std::cout << "Processing complete. Fourier descriptors saved to: " << outputDir << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
-    }
-
-    return 0;
-}
-
-
-
-
-// int main() {
-//     try {
-//         // Example usage
-//         auto descriptor = computeFourierDescriptor("binary_bounding_2.png");
-        
-//         // Print descriptor
-//         for (const auto& val : descriptor) {
-//             std::cout << val << " ";
-//         }
-        
-//         std::cout << std::endl;
-//         // Save the descriptor to a file
-//         try {
-            
-//             std::ofstream outFile("descriptor_test_bounding_2_cpp.csv");
-//             if (!outFile.is_open()) {
-//                 throw std::runtime_error("Could not open file to write: descriptor_test_bounding_2.csv");
-//             }
-//             for (size_t i = 0; i < descriptor.size(); ++i) {
-//                 outFile << descriptor[i];
-//                 if (i != descriptor.size() - 1) outFile << ",";
-//             }
-//             outFile << "\n";
-//             outFile.close();
-            
-//             std::cout << "Descriptor saved to: descriptor_test_bounding_2_cpp.csv" << std::endl;
-//         }
-//         catch (const std::exception& e) {
-//             std::cerr << "Error saving descriptor: " << e.what() << std::endl;
-//             return 1;
-//         }
-//     }
-//     catch (const std::exception& e) {
-//         std::cerr << "Error: " << e.what() << std::endl;
-//         return 1;
-//     }
-
-    
-    
-//     return 0;
-// }

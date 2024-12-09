@@ -1,5 +1,3 @@
-# This file will be a placeholder for the combined steps of the project and outline all the steps done in the project.
-
 # Main.cpp
 
 Parameters:
@@ -22,6 +20,6 @@ Steps:
 9. Compute fourier descriptors.
 10. Compute HOG descriptors.
 11. Save the output images and descriptors.
-
-Steps to complete:
-- SVM model training
+12. Compute SVM predicitons usuing the descriptors separately and get the final prediction.
+13. Save the final prediction.
+14. Repeat the process for all the frames in the input folder.

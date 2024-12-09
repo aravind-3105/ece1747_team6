@@ -11,32 +11,54 @@
 #include <cmath>
 #include <stdexcept>
 #include <tuple>
-#include "gmm.h"
-#include "fourier_descriptor.h"
-#include "hog_descriptor.h"
+#include <chrono>
+#include "../include/gmm.h"
+// If i want to have two options of header files - GPU and CPU for the same function fourier_descriptor.h or fourier_descriptor_gpu.h
+#define USE_GPU 1
+#ifdef USE_GPU
+#include "../include/fourier_descriptor.h"
+#include "../include/hog_descriptor.h"
+#else
+#include "../include/fourier_descriptor_cpu.h"
+#include "../include/hog_descriptor_cpu.h"
+#endif
+#include "../include/json.hpp"  // Include JSON library
 
-#include "json.hpp"  // Include JSON library
-namespace fs = std::filesystem;
-
+using namespace std;
+namespace fs = filesystem;
 using json = nlohmann::json;
-
 
 // Macro for error-checking
 #define CUDA_CHECK(call)                                                         \
     do {                                                                         \
         cudaError_t err = call;                                                  \
         if (err != cudaSuccess) {                                                \
-            std::printf("CUDA error in %s at line %d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
+            printf("CUDA error in %s at line %d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
             exit(EXIT_FAILURE);                                                  \
         }                                                                        \
     } while (0)
 
 
-// Function to execute the GMM module
-cv::Mat processGMM(const std::string& input_folder, const std::string& output_file) {
+template <typename TimeT = chrono::milliseconds>
+struct Timer {
+    chrono::time_point<chrono::steady_clock> start;
+
+    Timer() : start(chrono::steady_clock::now()) {}
+
+    double elapsed() const {
+        return chrono::duration_cast<TimeT>(chrono::steady_clock::now() - start).count();
+    }
+
+    void reset() {
+        start = chrono::steady_clock::now();
+    }
+};
+
+// Function to execute the GMM module - `
+cv::Mat processGMM(const string& input_folder, const string& output_file) {
     // Load all images from the folder
-    std::vector<cv::Mat> frames;
-    std::vector<std::string> file_paths;
+    vector<cv::Mat> frames;
+    vector<string> file_paths;
     cv::glob(input_folder + "/*.bmp", file_paths, false);
 
     for (const auto& file_path : file_paths) {
@@ -44,12 +66,12 @@ cv::Mat processGMM(const std::string& input_folder, const std::string& output_fi
         if (!image.empty()) {
             frames.push_back(image);
         } else {
-            std::cerr << "Failed to load image: " << file_path << std::endl;
+            cerr << "Failed to load image: " << file_path << endl;
         }
     }
 
     if (frames.empty()) {
-        std::cerr << "No images loaded. Exiting." << std::endl;
+        cerr << "No images loaded. Exiting." << endl;
         return cv::Mat();
     }
 
@@ -59,7 +81,7 @@ cv::Mat processGMM(const std::string& input_folder, const std::string& output_fi
 
     // Check for correct image type (CV_8UC3)
     if (frames[0].type() != CV_8UC3) {
-        std::cerr << "Expected images of type CV_8UC3 (8-bit, 3 channels). Exiting." << std::endl;
+        cerr << "Expected images of type CV_8UC3 (8-bit, 3 channels). Exiting." << endl;
         return cv::Mat();
     }
 
@@ -68,7 +90,7 @@ cv::Mat processGMM(const std::string& input_folder, const std::string& output_fi
     CUDA_CHECK(cudaMalloc(&d_frames, n_frames * height * width * 3 * sizeof(float)));
 
     // Allocate a temporary float array for frame data
-    std::vector<float> frame_float(height * width * 3);
+    vector<float> frame_float(height * width * 3);
 
     // Copy frames to GPU
     for (int i = 0; i < n_frames; i++) {
@@ -114,14 +136,18 @@ cv::Mat processGMM(const std::string& input_folder, const std::string& output_fi
     CUDA_CHECK(cudaFree(d_background));
     delete[] h_background;
 
-    std::cout << "Background saved to " << output_file << std::endl;
+    cout << "Background saved to " << output_file << endl;
 
     return background_image;
 }
 
-cv::Mat extractForeground(const cv::Mat background, const cv::Mat frame, const std::string& output_path) {
-    // Load the background model
-
+// Function to compute the Fourier descriptor from an image path 
+cv::Mat extractForeground(const cv::Mat background, const cv::Mat frame, const string& output_path) {
+    // Check if the input images are valid
+    if (background.empty() || frame.empty()) {
+        cerr << "Error: Input images are empty." << endl;
+        return cv::Mat();
+    }
     // Convert to float for precise calculations
     cv::Mat backgroundFloat, frameFloat;
     background.convertTo(backgroundFloat, CV_32F);
@@ -142,13 +168,13 @@ cv::Mat extractForeground(const cv::Mat background, const cv::Mat frame, const s
     // Save the result
     cv::imwrite(output_path, foregroundUint8);
 
-    // std::cout << "Foreground saved to " << output_path << std::endl;
+    // cout << "Foreground saved to " << output_path << endl;
 
     return foregroundUint8;
 }
 
-// Function to preprocess the foreground image
-cv::Mat preprocessForeground(const cv::Mat& foreground, const std::string& output_preprocessed) {
+// Function to preprocess the foreground image 
+cv::Mat preprocessForeground(const cv::Mat& foreground, const string& preprocessed_path) {
     cv::Mat grayForeground;
 
     // Convert to grayscale if necessary
@@ -159,7 +185,7 @@ cv::Mat preprocessForeground(const cv::Mat& foreground, const std::string& outpu
     }
 
     if (grayForeground.empty()) {
-        std::cerr << "Error converting foreground to grayscale." << std::endl;
+        cerr << "Error converting foreground to grayscale." << endl;
         return cv::Mat();
     }
 
@@ -172,26 +198,26 @@ cv::Mat preprocessForeground(const cv::Mat& foreground, const std::string& outpu
     cv::threshold(blurred, thresholded, 50, 255, cv::THRESH_BINARY);
 
     // Save the preprocessed image (optional)
-    if (!output_preprocessed.empty()) {
-        cv::imwrite(output_preprocessed, thresholded);
+    if (!preprocessed_path.empty()) {
+        cv::imwrite(preprocessed_path, thresholded);
     }
 
     return thresholded;
 }
 
 
-// Function to apply Connected Component Labeling (CCL)
-std::vector<cv::Mat> applyCCL(const cv::Mat binaryImage, const cv::Mat originalImage, const std::string& output_labeled) {
+// Function to apply Connected Component Labeling (CCL) - used for extracting individual components
+vector<cv::Mat> applyCCL(const cv::Mat binaryImage, const cv::Mat originalImage, const string& output_labeled) {
 
     // Apply Connected Component Labeling (CCL)
     cv::Mat labels, stats, centroids;
     if (binaryImage.type() != CV_8UC1) {
-        throw std::runtime_error("Input to connectedComponentsWithStats must be CV_8UC1 (binary image).");
+        throw runtime_error("Input to connectedComponentsWithStats must be CV_8UC1 (binary image).");
     }
     int numComponents = cv::connectedComponentsWithStats(binaryImage, labels, stats, centroids);
     // Print number of components
-    // std::cout << "Number of components: " << numComponents << std::endl;
-    std::vector<cv::Mat> extractedComponents;
+    // cout << "Number of components: " << numComponents << endl;
+    vector<cv::Mat> extractedComponents;
 
     int printedComponents = 0;
 
@@ -206,10 +232,10 @@ std::vector<cv::Mat> applyCCL(const cv::Mat binaryImage, const cv::Mat originalI
         // Filter out small components based on area (optional)
         if (area > 50) { // Adjust the threshold as needed
             // Extract the individual component from the original image
-            x = std::max(5, x);
-            y = std::max(5, y);
-            width = std::min(width, originalImage.cols - x - 5);
-            height = std::min(height, originalImage.rows - y - 5);
+            x = max(5, x);
+            y = max(5, y);
+            width = min(width, originalImage.cols - x - 5);
+            height = min(height, originalImage.rows - y - 5);
             cv::Mat component = originalImage(cv::Rect(x-5, y-5, width+10, height+10)).clone();
             
             
@@ -220,7 +246,7 @@ std::vector<cv::Mat> applyCCL(const cv::Mat binaryImage, const cv::Mat originalI
             cv::rectangle(originalImage, cv::Rect(x, y, width, height), cv::Scalar(0, 255, 0), 2);
 
             // Save the extracted component
-            std::string filename = "component_" + std::to_string(printedComponents) + ".png";
+            string filename = "component_" + to_string(printedComponents) + ".png";
             cv::imwrite(filename, component);
             printedComponents++;
         }
@@ -228,27 +254,19 @@ std::vector<cv::Mat> applyCCL(const cv::Mat binaryImage, const cv::Mat originalI
 
     // Save the result with bounding boxes
     cv::imwrite(output_labeled, originalImage);
-    // std::cout << "Labeled output saved to " << output_labeled << std::endl;
+    // cout << "Labeled output saved to " << output_labeled << endl;
 
     return extractedComponents;
 }
 
-
-// Function to generate binary bounding images
-std::vector<cv::Mat> generateBinaryBoundingImages(const cv::Mat binaryImage) {
-    // Load the binary preprocessed image
-    // cv::Mat binaryImage = cv::imread(preprocessed_image, cv::IMREAD_GRAYSCALE);
-    // if (binaryImage.empty()) {
-    //     std::cerr << "Error: Could not load " << preprocessed_image << ". Check the file path." << std::endl;
-    //     return {};
-    // }
-
+// Function to generate binary bounding images - used for Fourier descriptor
+vector<cv::Mat> generateBinaryBoundingImages(const cv::Mat binaryImage) {
     // Apply Connected Component Labeling (CCL)
     cv::Mat labels, stats, centroids;
     int numComponents = cv::connectedComponentsWithStats(binaryImage, labels, stats, centroids);
 
     // Vector to store the binary bounding images
-    std::vector<cv::Mat> binaryBoundingImages;
+    vector<cv::Mat> binaryBoundingImages;
 
     // Iterate over each component to create binary bounding images
     for (int i = 1; i < numComponents; i++) { // Skip the background (label 0)
@@ -257,10 +275,10 @@ std::vector<cv::Mat> generateBinaryBoundingImages(const cv::Mat binaryImage) {
         int width = stats.at<int>(i, cv::CC_STAT_WIDTH);
         int height = stats.at<int>(i, cv::CC_STAT_HEIGHT);
 
-        x = std::max(0, x);
-        y = std::max(0, y);
-        width = std::min(width, binaryImage.cols - x);
-        height = std::min(height, binaryImage.rows - y);
+        x = max(0, x);
+        y = max(0, y);
+        width = min(width, binaryImage.cols - x);
+        height = min(height, binaryImage.rows - y);
 
         // Extract binary mask for this component
         cv::Mat componentMask = (labels == i);
@@ -272,83 +290,53 @@ std::vector<cv::Mat> generateBinaryBoundingImages(const cv::Mat binaryImage) {
         binaryBoundingImages.push_back(binaryBoundingImage);
 
         // Save the binary bounding image
-        std::string filename = "binary_bounding_" + std::to_string(i) + ".png";
-        cv::imwrite(filename, binaryBoundingImage * 255); // Scale mask to 255 for saving
-
-        // std::cout << "Saved: " << filename << std::endl;
+        // string filename = "binary_bounding_" + to_string(i) + ".png";
+        // cv::imwrite(filename, binaryBoundingImage * 255); // Scale mask to 255 for saving
+        // cout << "Saved: " << filename << endl;
     }
 
-    // std::cout << "Binary bounding images saved for all components." << std::endl;
+    // cout << "Binary bounding images saved for all components." << endl;
 
     return binaryBoundingImages;
 }
 
-// // Function to compute Fourier Descriptor
-// void normalizeDescriptor(std::vector<float>& descriptor, const std::vector<float>& mean, const std::vector<float>& stdDev) {
-//     for (size_t i = 0; i < descriptor.size(); ++i) {
-//         descriptor[i] = (descriptor[i] - mean[i]) / stdDev[i];
-//     }
-// }
-
-// Function to load SVM weights
-std::pair<std::vector<float>, float> loadSVMModel(const std::string& modelPath) {
-    std::ifstream file(modelPath);
-    if (!file.is_open()) {
-        throw std::runtime_error("Could not open SVM model file.");
-    }
-
-    std::vector<float> weights;
-    float weight;
-    while (file >> weight) {
-        weights.push_back(weight);
-    }
-
-    // The last value is the bias term
-    float bias = weights.back();
-    weights.pop_back();
-
-    return {weights, bias};
-}
-
-// Function to normalise SVM scaler
-std::vector<float> scaleDescriptorWithJson(const std::vector<float>& descriptor, const std::string& jsonPath) {
+// Function to normalise SVM scaler - used for Fourier descriptor
+vector<float> scaleDescriptorWithJson(const vector<float>& descriptor, const string& jsonPath) {
     // Load the JSON file
     nlohmann::json jsonData;
-    std::ifstream file(jsonPath);
+    ifstream file(jsonPath);
     if (!file.is_open()) {
-        throw std::runtime_error("Error opening JSON file: " + jsonPath);
+        throw runtime_error("Error opening JSON file: " + jsonPath);
     }
     file >> jsonData;
 
     // Extract mean and variance from JSON
-    std::vector<float> mean = jsonData["mean"].get<std::vector<float>>();
-    std::vector<float> variance = jsonData["variance"].get<std::vector<float>>();
+    vector<float> mean = jsonData["mean"].get<vector<float>>();
+    vector<float> variance = jsonData["variance"].get<vector<float>>();
 
     // Check if sizes match
     if (descriptor.size() != mean.size() || descriptor.size() != variance.size()) {
-        throw std::invalid_argument("Descriptor size does not match the mean or variance size in the JSON file.");
+        throw invalid_argument("Descriptor size does not match the mean or variance size in the JSON file.");
     }
 
     // Scale the descriptor
-    std::vector<float> scaledDescriptor(descriptor.size());
+    vector<float> scaledDescriptor(descriptor.size());
     for (size_t i = 0; i < descriptor.size(); ++i) {
         if (variance[i] == 0.0f) {
             // Handle zero variance: set scaled value to 0.0
             scaledDescriptor[i] = 0.0f;
             continue;
         }
-        scaledDescriptor[i] = (descriptor[i] - mean[i]) / std::sqrt(variance[i]);
+        scaledDescriptor[i] = (descriptor[i] - mean[i]) / sqrt(variance[i]);
     }
 
     return scaledDescriptor;
 }
 
-
-
-// Function to make predictions SVM prediction function
-int predict(const std::vector<float>& descriptor, const std::vector<float>& weights, float bias) {
+// Function to make predictions SVM prediction function - used for Fourier descriptor
+int predictHumanOrNotFourier(const vector<float>& descriptor, const vector<float>& weights, float bias) {
     if (descriptor.size() != weights.size()) {
-        throw std::invalid_argument("Descriptor and weights must have the same size.");
+        throw invalid_argument("Descriptor and weights must have the same size.");
     }
 
     float dotProduct = 0.0f;
@@ -360,35 +348,34 @@ int predict(const std::vector<float>& descriptor, const std::vector<float>& weig
     return score >= 0 ? 1 : 0;
 }
 
-
-std::vector<float> flattenWeights(const std::vector<std::vector<float>>& weights2D) {
-    std::vector<float> weights1D;
+// Function to flatten 2D weights to 1D - used for Fourier descriptor
+vector<float> flattenWeights(const vector<vector<float>>& weights2D) {
+    vector<float> weights1D;
     for (const auto& row : weights2D) {
         weights1D.insert(weights1D.end(), row.begin(), row.end());
     }
     return weights1D;
 }
 
-
-// Function to load the SVM model from JSON
-void loadSVMModel(const std::string& jsonPath, std::vector<std::vector<float>>& weights, std::vector<float>& bias) {
-    std::ifstream inputFile(jsonPath);
+// Function to load the SVM model from JSON - used for Fourier descriptor
+void loadSVMModel(const string& jsonPath, vector<vector<float>>& weights, vector<float>& bias) {
+    ifstream inputFile(jsonPath);
     if (!inputFile.is_open()) {
-        throw std::runtime_error("Unable to open JSON file");
+        throw runtime_error("Unable to open JSON file");
     }
 
     json svmModel;
     inputFile >> svmModel;
 
     // Extract weights and bias
-    weights = svmModel["weights"].get<std::vector<std::vector<float>>>();
-    bias = svmModel["bias"].get<std::vector<float>>();
+    weights = svmModel["weights"].get<vector<vector<float>>>();
+    bias = svmModel["bias"].get<vector<float>>();
 }
 
-// Function to compute mean and standard deviation for each feature
-void computeMeanAndStdDev(const std::vector<std::vector<float>>& data, std::vector<float>& mean, std::vector<float>& stdDev) {
+// Function to compute mean and standard deviation for each feature - used for HOG descriptor
+void computeMeanAndStdDev(const vector<vector<float>>& data, vector<float>& mean, vector<float>& stdDev) {
     if (data.empty()) {
-        throw std::runtime_error("Data is empty.");
+        throw runtime_error("Data is empty.");
     }
 
     size_t numSamples = data.size();
@@ -418,22 +405,22 @@ void computeMeanAndStdDev(const std::vector<std::vector<float>>& data, std::vect
     }
 
     for (size_t i = 0; i < numFeatures; ++i) {
-        stdDev[i] = std::sqrt(stdDev[i] / static_cast<float>(numSamples));
+        stdDev[i] = sqrt(stdDev[i] / static_cast<float>(numSamples));
     }
 }
 
-// Function to normalize the descriptor
-void normalizeHOG(std::vector<float>& descriptor, const std::vector<float>& mean, const std::vector<float>& std_dev) {
+// Function to normalize the descriptor - used for HOG descriptor
+void normalizeHOG(vector<float>& descriptor, const vector<float>& mean, const vector<float>& std_dev) {
     for (size_t i = 0; i < descriptor.size(); ++i) {
         descriptor[i] = (descriptor[i] - mean[i]) / std_dev[i];
     }
 }
 
-// Helper function to compute HOG descriptors for an image
-std::vector<float> computeHOG_predict(const std::string& imagePath, const std::vector<float>& mean, const std::vector<float>& std_dev) {
+// Helper function to compute HOG descriptors for an image - used for HOG descriptor
+vector<float> computeHOG_predict(const string& imagePath, const vector<float>& mean, const vector<float>& std_dev) {
     cv::Mat image = cv::imread(imagePath, cv::IMREAD_GRAYSCALE);
     if (image.empty()) {
-        throw std::runtime_error("Could not load image: " + imagePath);
+        throw runtime_error("Could not load image: " + imagePath);
     }
 
     cv::resize(image, image, cv::Size(128, 128));
@@ -446,7 +433,7 @@ std::vector<float> computeHOG_predict(const std::string& imagePath, const std::v
         9
     );
 
-    std::vector<float> descriptors;
+    vector<float> descriptors;
     hog.compute(image, descriptors);
 
     normalizeHOG(descriptors, mean, std_dev);
@@ -454,13 +441,12 @@ std::vector<float> computeHOG_predict(const std::string& imagePath, const std::v
     return descriptors;
 }
 
-
-// Function to predict if an image is of a human or not
-std::string predictHumanOrNot(const std::string& imagePath, const cv::Ptr<cv::ml::SVM>& svm, 
-                              const std::vector<float>& mean, const std::vector<float>& std_dev) {
+// Function to predict if an image is of a human or not - used for HOG descriptor
+string predictHumanOrNotHOG(const string& imagePath, const cv::Ptr<cv::ml::SVM>& svm, 
+                              const vector<float>& mean, const vector<float>& std_dev) {
     try {
         // Compute and normalize HOG descriptor
-        std::vector<float> descriptor = computeHOG_predict(imagePath, mean, std_dev);
+        vector<float> descriptor = computeHOG_predict(imagePath, mean, std_dev);
 
         // Convert to cv::Mat for prediction
         cv::Mat descriptorMat(1, descriptor.size(), CV_32F, descriptor.data());
@@ -468,164 +454,239 @@ std::string predictHumanOrNot(const std::string& imagePath, const cv::Ptr<cv::ml
         // Predict using SVM
         float response = svm->predict(descriptorMat);
         return (response == 1) ? "person" : "non-person";
-    } catch (const std::exception& e) {
-        std::cerr << "Error processing " << imagePath << ": " << e.what() << std::endl;
+    } catch (const exception& e) {
+        cerr << "Error processing " << imagePath << ": " << e.what() << endl;
         return "error";
     }
 }
 
+
 int main(int argc, char* argv[]) {
     // Default values
-    std::string input_folder = "../../data/OSUdata/5b";
-    // std::string output_background = "background.png";
-    std::string output_background = "/content/data/OSUdata/background/background_5b.png";
-    std::string output_foreground = "foreground.png";
-    std::string output_preprocessed = "preprocessed.png";
-    std::string output_labeled = "labeled_output.png";
-    std::string output_labeled_folder = "labeled_output";
-    std::string predictions_file = "predictions_5b.csv";
+
+    // If running locally:
+    string folder_name = "5b";
+    string input_folder = "../data/OSUdata/" + folder_name;
+    string background_path = "../data/OSUdata/background/background_" + folder_name + "_1x.png";
+    string foreground_path = "temp/foreground.png";
+    string preprocessed_path = "temp/preprocessed.png";
+    string output_labeled = "labeled_output.png";
+    string output_labeled_folder = "temp/labeled_output";
+    string predictions_path = "temp/predictions_" + folder_name + ".csv";
+    string metrics_path = "temp/performance_metrics" + folder_name + ".csv";
+    string modelHog_path = "../models//hog_svm_model.xml";
+    string modelFourier_path = "../models/svm_model_v3.json";
+    string normalization_path = "../models/hog_normalization.json";
+    string svm_scalar_values_path = "../models/scaler_values.json";
+
+    // If running on colab comment the above and uncomment the below:
+    // ---------------------
+    // string folder_name = "5b";
+    // string input_folder = "/content/5b_upscale/3x";
+    // string background_path = "/content/data/OSUdata/background/background_5b_3x.png";
+    // string foreground_path = "/content/src/temp/foreground.png";
+    // string preprocessed_path = "/content/src/temp/preprocessed.png";
+    // string output_labeled = "labeled_output.png";
+    // string output_labeled_folder = "/content/src/temp/labeled_output";
+    // string predictions_path = "/content/src/temp/predictions_5b_3x.csv";
+    // string metrics_path = "/content/src/temp/performance_metrics_5b_3x.csv";
+    // string modelHog_path = "/content/models/hog_svm_model.xml";
+    // string modelFourier_path = "/content/models/svm_model_v3.json";
+    // string normalization_path = "/content/models/hog_normalization.json";
+    // string svm_scalar_values_path = "/content/models/scaler_values.json";
+    // ---------------------
+
+
 
     // Overwrite defaults if arguments are provided
     if (argc > 1) input_folder = argv[1];
-    if (argc > 2) output_background = argv[2];
+    if (argc > 2) background_path = argv[2];
+    if (argc > 3) foreground_path = argv[3];
+    if (argc > 4) preprocessed_path = argv[4];
+    if (argc > 5) output_labeled = argv[5];
+    if (argc > 6) output_labeled_folder = argv[6];
+    if (argc > 7) predictions_path = argv[7];
+    if (argc > 8) metrics_path = argv[8];
+    if (argc > 9) modelHog_path = argv[9];
+    if (argc > 10) modelFourier_path = argv[10];
+    if (argc > 11) normalization_path = argv[11];
+    if (argc > 12) svm_scalar_values_path = argv[12];
+    
 
     // Get list of all .bmp files in the input folder
-    std::vector<std::string> file_paths;
+    vector<string> file_paths;
     cv::glob(input_folder + "/*.bmp", file_paths, false);
 
     // Check if the input folder is empty
     if (file_paths.empty()) {
-        std::cerr << "No .bmp files found in the input folder. Exiting." << std::endl;
+        cerr << "No .bmp files found in the input folder. Exiting." << endl;
         return -1;
     }
 
-    // Prepare results vector
-    // std::vector<std::tuple<std::string, std::string, std::string, int, int>> results;
-    std::vector<std::tuple<std::string, std::string, std::string, int, int, std::string>> results;
+    // Prepare results vector <filename, fourier_predictions, hog_predictions, fourier_people_count, hog_people_count>
+    // vector<tuple<string, string, string, int, int, string>> results;
 
+    // Prepare results vector <filename, people_count, prediction>
+    vector<tuple<string, int, string>> results;
+
+    // Process GMM
+        // Run the GMM module - run this only once to generate the background image and then comment it out
+    // std::cout << "Running GMM module..." << std::endl;
+    // processGMM(input_folder, background_path);
 
     // Load precomputed background
-    cv::Mat background = cv::imread(output_background);
+    cv::Mat background = cv::imread(background_path);
     if (background.empty()) {
-        std::cerr << "Error: Could not load background image: " << output_background << std::endl;
+        cerr << "Error: Could not load background image: " << background_path << endl;
         return -1;
     }
 
     // Load HOG SVM model
-    std::string modelPath = "hog_svm_model.xml";
-    cv::Ptr<cv::ml::SVM> svm = cv::ml::SVM::load(modelPath);
+    cv::Ptr<cv::ml::SVM> svm = cv::ml::SVM::load(modelHog_path);
     if (svm.empty()) {
-        std::cerr << "Error loading SVM model from " << modelPath << std::endl;
+        cerr << "Error loading SVM model from " << modelHog_path << endl;
         return -1;
     }
 
-    // Load normalization parameters
-    std::string normalizationPath = "hog_normalization.json";
-    std::ifstream file(normalizationPath);
+    // Load normalization parameters for HOG
+    ifstream file(normalization_path);
     nlohmann::json normalizationParams;
     file >> normalizationParams;
-    std::vector<float> mean = normalizationParams["mean"];
-    std::vector<float> std_dev = normalizationParams["std_dev"];
+    if (normalizationParams.empty()) {
+        cerr << "Error loading normalization parameters from " << normalization_path << endl;
+        return -1;
+    }
+    vector<float> mean = normalizationParams["mean"];
+    vector<float> std_dev = normalizationParams["std_dev"];
 
     // Load the Fourier SVM model
-    std::vector<std::vector<float>> weights;
-    std::vector<float> bias;
-    loadSVMModel("svm_model_v3.json", weights, bias);
-    std::vector<float> weightsFlattened = flattenWeights(weights);
-    std::string svm_scalar_values = "scaler_values.json";
+    vector<vector<float>> weights;
+    vector<float> bias;
+    loadSVMModel(modelFourier_path, weights, bias);
+    if (weights.empty() || bias.empty()) {
+        cerr << "Error loading SVM model from " << modelFourier_path << endl;
+        return -1;
+    }
+    vector<float> weightsFlattened = flattenWeights(weights);
+    
 
+
+    // Performance metrics initialization
+    ofstream metricsFile(metrics_path);
+    metricsFile << "Frame,Foreground Extraction (ms),Preprocessing (ms),CCL (ms),HOG Prediction (ms),Fourier Prediction (ms),Total Time (ms),FPS\n";
+    metricsFile.close();
+    double total_extractForeground = 0, total_preprocessForeground = 0, total_applyCCL = 0;
+    double total_hogPrediction = 0, total_fourierPrediction = 0, total_pipeline_time = 0;
+    int processed_frames = 0;
+
+
+
+    // To test on a single file uncomment the below and replace the file path with the desired file path
+    // file_paths = {"../data/OSUdata/5b/5b_0882.bmp"};
 
     // Process each file
-    // file_paths = {"../../data/OSUdata/5b/img_00882.bmp"};
     for (const auto& frame_file : file_paths) {
-        std::cout << "Processing file: " << frame_file << std::endl;
+        // cout << "Processing file: " << frame_file << endl;
 
+        // Timer for overall frame processing
+        Timer<> frameTimer;
+        double time_extractForeground = 0, time_preprocessForeground = 0, time_applyCCL = 0;
+        double time_hogPrediction = 0, time_fourierPrediction = 0;
+
+        frameTimer.reset();
         // Load the frame
         cv::Mat frame = cv::imread(frame_file);
         cv::Mat frame_gray = cv::imread(frame_file, cv::IMREAD_GRAYSCALE);
-
         if (frame.empty() || frame_gray.empty()) {
-            std::cerr << "Error: Could not load frame: " << frame_file << std::endl;
+            cerr << "Error: Could not load frame: " << frame_file << endl;
             continue;
         }
 
+        // Generate background
+
+
         // Extract foreground
-        cv::Mat foreground = extractForeground(background, frame, output_foreground);
+        Timer<> timer;
+        timer.reset();
+        cv::Mat foreground = extractForeground(background, frame, foreground_path);
+        time_extractForeground = timer.elapsed();
 
         // Preprocess the foreground
-        cv::Mat preprocessed = preprocessForeground(foreground, output_preprocessed);
+        timer.reset();
+        cv::Mat preprocessed = preprocessForeground(foreground, preprocessed_path);
+        time_preprocessForeground = timer.elapsed();
 
         // Check if the preprocessed image is valid
         if (preprocessed.empty() || preprocessed.type() != CV_8UC1) {
-            std::cerr << "Preprocessed image is invalid or not binary. Skipping this file." << std::endl;
+            cerr << "Preprocessed image is invalid or not binary. Skipping this file." << endl;
             continue;
         }
 
         // Apply Connected Component Labeling (CCL)
-        std::string frame_filename = fs::path(frame_file).stem().string();
-        std::string output_labeled_path = output_labeled_folder + "/" + frame_filename + "_labeled_output.png";
-        std::vector<cv::Mat> components = applyCCL(preprocessed, frame, output_labeled_path);
+        timer.reset();
+        string frame_filename = fs::path(frame_file).stem().string();
+        string output_labeled_path = output_labeled_folder + "/" + frame_filename + "_labeled_output.png";
+        vector<cv::Mat> components = applyCCL(preprocessed, frame, output_labeled_path);
+        time_applyCCL = timer.elapsed();
 
         // Generate binary bounding images
-        std::vector<cv::Mat> binaryBoundingImages = generateBinaryBoundingImages(preprocessed);
+        vector<cv::Mat> binaryBoundingImages = generateBinaryBoundingImages(preprocessed);
 
         // Fourier Prediction
-        std::string fourier_predictions;
+        string fourier_predictions;
         int fourier_people_count = 0;
 
-        // for (const auto& binaryImage : binaryBoundingImages) {
-        //     auto descriptor = computeFourierDescriptor_image(binaryImage, 128);
-        //     int prediction_fourier = predict(descriptor, weightsFlattened, bias[0]);
-        //     std::string prediction = (prediction_fourier == 1 ? "person" : "non-person");
-        //     fourier_predictions += prediction + "; ";  // Concatenate predictions
-        //     if (prediction_fourier == 1) {
-        //         fourier_people_count++;
-        //     }
-        // }
 
-        // std::cout<<"Number of components: "<<components.size()<<std::endl;
-        // std::cout<<"Number of binary components: "<<binaryBoundingImages.size()<<std::endl;
-        // std::vector<std::string> binaryPaths_test = {"bounding_images/binary_bounding_1.png","binary_bounding_2.png","binary_bounding_3.png","binary_bounding_4.png"};
-        int tt = 0;
+        // cout<<"Number of components: "<<components.size()<<endl;
+        // cout<<"Number of binary components: "<<binaryBoundingImages.size()<<endl;
+        // int tt = 0;
+        // vector<string> binaryPaths_test = {"bounding_images/binary_bounding_1.png","binary_bounding_2.png","binary_bounding_3.png","binary_bounding_4.png"};
+
+        timer.reset();
         for (const auto& binaryImage : binaryBoundingImages) {
             // Ensure the image is binary before computing the descriptor
             // if (binaryImage.type() != CV_8UC1) {
-            //     std::cerr << "Skipping non-binary image component." << std::endl;
+            //     cerr << "Skipping non-binary image component." << endl;
             //     continue;
             // }
 
             // Compute Fourier descriptor
-
             auto descriptor = computeFourierDescriptorFromImage(binaryImage, 128);
+
             // auto descriptor = computeFourierDescriptor_path(binaryPaths_test[tt], 128);
-            tt+=1;
-            auto descriptor_scalar = scaleDescriptorWithJson(descriptor, svm_scalar_values);
+            // tt+=1;
+
+            // Scale the descriptor using the precomputed mean and standard deviation
+            auto descriptor_scalar = scaleDescriptorWithJson(descriptor, svm_scalar_values_path);
             // Perform classification using the Fourier descriptor
-            int prediction_fourier = predict(descriptor_scalar, weightsFlattened, bias[0]);
-            std::string prediction = (prediction_fourier == 1 ? "person" : "non-person");
-            // std::cout<<"Prediction for Fourier: "<<prediction<<std::endl;
+            int prediction_fourier = predictHumanOrNotFourier(descriptor_scalar, weightsFlattened, bias[0]);
+            string prediction = (prediction_fourier == 1 ? "person" : "non-person");
+            // cout<<"Prediction for Fourier: "<<prediction<<endl;
             fourier_predictions += prediction + "; ";  // Concatenate predictions
             if (prediction_fourier == 1) {
                 fourier_people_count++;
             }
         }
+        time_fourierPrediction = timer.elapsed();
 
         // HOG Prediction
-        std::string hog_predictions;
+        string hog_predictions;
         int hog_people_count = 0;
-
+        timer.reset();
         for (size_t i = 0; i < components.size(); ++i) {
-            std::string componentPath = "component_" + std::to_string(i) + ".png";
+            string componentPath = "component_" + to_string(i) + ".png";
             cv::imwrite(componentPath, components[i]);
-            std::string prediction = predictHumanOrNot(componentPath, svm, mean, std_dev);
+            string prediction = predictHumanOrNotHOG(componentPath, svm, mean, std_dev);
             hog_predictions += prediction + "; ";  // Concatenate predictions
             if (prediction == "person") {
                 hog_people_count++;
             }
         }
+        time_hogPrediction = timer.elapsed();
+
 
         // Combined Prediction
-        std::string combined_prediction;
+        string combined_prediction;
         if (fourier_people_count > 0 && hog_people_count > 0) {
             combined_prediction = "person";
         } else {
@@ -633,41 +694,77 @@ int main(int argc, char* argv[]) {
         }
 
         // Store results
-        // results.emplace_back(frame_file, fourier_predictions, hog_predictions, fourier_people_count, hog_people_count);
-        results.emplace_back(frame_file, fourier_predictions, hog_predictions, fourier_people_count, hog_people_count, combined_prediction);
+        // To store <filename, fourier_predictions, hog_predictions, fourier_people_count, hog_people_count>
+        // results.emplace_back(frame_file, fourier_predictions, hog_predictions, fourier_people_count, hog_people_count, combined_prediction);
+        // To store <filename, people_count, prediction>
+        results.emplace_back(frame_file, hog_people_count, combined_prediction);
+
+        double total_pipeline_time = frameTimer.elapsed();
+        double fps = 1000.0 / total_pipeline_time; // Convert ms to FPS (1 s = 1000 ms)
+
+        // Log metrics for each frame
+        cout << "Frame: " << frame_file << "\n";
+        cout << "Foreground Extraction: " << time_extractForeground << " ms\n";
+        cout << "Preprocessing: " << time_preprocessForeground << " ms\n";
+        cout << "CCL: " << time_applyCCL << " ms\n";
+        cout << "HOG Prediction: " << time_hogPrediction << " ms\n";
+        cout << "Fourier Prediction: " << time_fourierPrediction << " ms\n";
+        cout << "Total Pipeline Time: " << total_pipeline_time << " ms\n";
+        cout << "FPS: " << fps << "\n";
+
+        // Save metrics to CSV file
+        ofstream metricsFile(metrics_path , ios::app);
+        metricsFile << frame_file << ","
+                    << time_extractForeground << ","
+                    << time_preprocessForeground << ","
+                    << time_applyCCL << ","
+                    << time_hogPrediction << ","
+                    << time_fourierPrediction << ","
+                    << total_pipeline_time << ","
+                    << fps << "\n";
+        metricsFile.close();
+
+        // Accumulate total times
+        total_extractForeground += time_extractForeground;
+        total_preprocessForeground += time_preprocessForeground;
+        total_applyCCL += time_applyCCL;
+        total_hogPrediction += time_hogPrediction;
+        total_fourierPrediction += time_fourierPrediction;
+        total_pipeline_time += frameTimer.elapsed();
+
+        processed_frames++;
 
 
 
         // Clean up temporary files
         for (size_t i = 0; i < binaryBoundingImages.size(); ++i) {
-            std::string binaryBoundingPath = "binary_bounding_" + std::to_string(i) + ".png";
-            std::remove(binaryBoundingPath.c_str());
+            string binaryBoundingPath = "binary_bounding_" + to_string(i) + ".png";
+            remove(binaryBoundingPath.c_str());
         }
         for (size_t i = 0; i < components.size(); ++i) {
-            std::string componentPath = "component_" + std::to_string(i) + ".png";
-            std::remove(componentPath.c_str());
+            string componentPath = "component_" + to_string(i) + ".png";
+            remove(componentPath.c_str());
         }
     }
 
+
     // Save results to a CSV file
-    // std::ofstream resultsFile("predictions.csv");
-    // resultsFile << "Filename,Fourier Predictions,HOG Predictions,Fourier People Count,HOG People Count\n";
-    // for (const auto& [filename, fourier_preds, hog_preds, fourier_count, hog_count] : results) {
-    //     resultsFile << filename << ",\"" << fourier_preds << "\",\"" << hog_preds << "\"," << fourier_count << "," << hog_count << "\n";
+    ofstream resultsFile(predictions_path);
+    // To store <filename, fourier_predictions, hog_predictions, fourier_people_count, hog_people_count, combined_prediction>
+    // resultsFile << "Filename,Fourier Predictions,HOG Predictions,Fourier People Count,HOG People Count,Combined Prediction\n";
+    // for (const auto& [filename, fourier_preds, hog_preds, fourier_count, hog_count, combined_pred] : results) {
+    //     resultsFile << filename << ",\"" << fourier_preds << "\",\"" << hog_preds << "\"," << fourier_count << "," << hog_count << "," << combined_pred << "\n";
     // }
     // resultsFile.close();
 
-    // std::cout << "Predictions saved to predictions.csv" << std::endl;
-
-    // Save results to a CSV file
-    std::ofstream resultsFile(predictions_file);
-    resultsFile << "Filename,Fourier Predictions,HOG Predictions,Fourier People Count,HOG People Count,Combined Prediction\n";
-    for (const auto& [filename, fourier_preds, hog_preds, fourier_count, hog_count, combined_pred] : results) {
-        resultsFile << filename << ",\"" << fourier_preds << "\",\"" << hog_preds << "\"," << fourier_count << "," << hog_count << "," << combined_pred << "\n";
+    // To store <filename, people_count, prediction>
+    resultsFile << "Filename,People Count,Prediction\n";
+    for (const auto& [filename, people_count, prediction] : results) {
+        resultsFile << filename << "," << people_count << "," << prediction << "\n";
     }
     resultsFile.close();
+    cout << "Predictions saved to " << predictions_path << endl;
 
-    std::cout << "Predictions saved to predictions.csv" << std::endl;
 
     return 0;
 }

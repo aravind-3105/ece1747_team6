@@ -38,3 +38,6 @@
 *.jpg
 *.jpeg
 *.svg
+
+# Documents
+*.csv

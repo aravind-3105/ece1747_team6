@@ -6,6 +6,7 @@
 #include <vector>
 
 
+
 // Helper function to extract contours using OpenCV
 // Extract the largest contour from a binary image
 std::vector<cv::Point> extractContour(const cv::Mat& binaryImage) {

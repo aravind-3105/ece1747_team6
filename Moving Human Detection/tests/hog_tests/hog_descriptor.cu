@@ -1,10 +1,12 @@
-#include "../include/hog_descriptor.h"
+#include "hog_descriptor.h"
 #include <cuda_runtime.h>
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <cmath>
+
+#define HOG_NUM_BINS 16
 
 #define CUDA_CHECK(call) \
     do { \
@@ -46,34 +48,75 @@ __global__ void computeGradientKernel(const float* d_image, float* d_gx, float* 
 }
 
 // CUDA kernel to compute HOG histograms for each cell
-__global__ void computeHOGKernel(const float* d_magnitude, const float* d_orientation, float* d_histogram, int width, int height, int cell_size, int num_bins) {
+// __global__ void computeHOGKernel(const float* d_magnitude, const float* d_orientation, float* d_histogram, int width, int height, int cell_size, int num_bins) {
+//     int cell_x = blockIdx.x * blockDim.x + threadIdx.x;
+//     int cell_y = blockIdx.y * blockDim.y + threadIdx.y;
+
+//     if (cell_x >= width / cell_size || cell_y >= height / cell_size) return;
+
+//     int histogram_idx = (cell_y * (width / cell_size) + cell_x) * num_bins;
+
+//     for (int bin = 0; bin < num_bins; ++bin) {
+//         d_histogram[histogram_idx + bin] = 0.0f;
+//     }
+
+//     for (int y = 0; y < cell_size; ++y) {
+//         for (int x = 0; x < cell_size; ++x) {
+//             int pixel_x = cell_x * cell_size + x;
+//             int pixel_y = cell_y * cell_size + y;
+
+//             if (pixel_x >= width || pixel_y >= height) continue;
+
+//             int pixel_idx = pixel_y * width + pixel_x;
+//             float magnitude = d_magnitude[pixel_idx];
+//             float orientation = d_orientation[pixel_idx];
+
+//             int bin = static_cast<int>(orientation / (180.0f / num_bins)) % num_bins;
+//             d_histogram[histogram_idx + bin] += magnitude;
+//         }
+//     }
+// }
+__global__ void computeHOGKernel(const float* d_magnitude, const float* d_orientation, float* d_histogram, 
+                                       int width, int height, int cell_size, int num_bins) {
+    __shared__ float shared_histogram[HOG_NUM_BINS];
+
     int cell_x = blockIdx.x * blockDim.x + threadIdx.x;
     int cell_y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (cell_x >= width / cell_size || cell_y >= height / cell_size) return;
-
-    int histogram_idx = (cell_y * (width / cell_size) + cell_x) * num_bins;
-
-    for (int bin = 0; bin < num_bins; ++bin) {
-        d_histogram[histogram_idx + bin] = 0.0f;
+    if (threadIdx.x < HOG_NUM_BINS) {
+        shared_histogram[threadIdx.x] = 0.0f;
     }
+    __syncthreads();
 
-    for (int y = 0; y < cell_size; ++y) {
-        for (int x = 0; x < cell_size; ++x) {
-            int pixel_x = cell_x * cell_size + x;
-            int pixel_y = cell_y * cell_size + y;
+    if (cell_x < width / cell_size && cell_y < height / cell_size) {
+        int histogram_idx = (cell_y * (width / cell_size) + cell_x) * num_bins;
 
-            if (pixel_x >= width || pixel_y >= height) continue;
+        for (int y = 0; y < cell_size; ++y) {
+            for (int x = 0; x < cell_size; ++x) {
+                int pixel_x = cell_x * cell_size + x;
+                int pixel_y = cell_y * cell_size + y;
 
-            int pixel_idx = pixel_y * width + pixel_x;
-            float magnitude = d_magnitude[pixel_idx];
-            float orientation = d_orientation[pixel_idx];
+                if (pixel_x >= width || pixel_y >= height) continue;
 
-            int bin = static_cast<int>(orientation / (180.0f / num_bins)) % num_bins;
-            d_histogram[histogram_idx + bin] += magnitude;
+                int pixel_idx = pixel_y * width + pixel_x;
+                float magnitude = d_magnitude[pixel_idx];
+                float orientation = d_orientation[pixel_idx];
+
+                int bin = static_cast<int>(orientation / (180.0f / num_bins)) % num_bins;
+                atomicAdd(&shared_histogram[bin], magnitude);
+            }
+        }
+        __syncthreads();
+
+        // Write shared histogram to global memory
+        if (threadIdx.x == 0) {
+            for (int bin = 0; bin < num_bins; ++bin) {
+                atomicAdd(&d_histogram[histogram_idx + bin], shared_histogram[bin]);
+            }
         }
     }
 }
+
 
 void computeHOG(const std::string& inputImagePath, const std::string& outputHistogramPath) {
     cv::Mat inputImage = cv::imread(inputImagePath, cv::IMREAD_GRAYSCALE);
@@ -131,16 +174,16 @@ void computeHOG(const std::string& inputImagePath, const std::string& outputHist
     }
 
     // Save to CSV
-    std::ofstream outFile(outputHistogramPath);
-    for (size_t i = 0; i < h_histogram.size(); ++i) {
-        outFile << h_histogram[i];
-        if ((i + 1) % num_bins == 0) {
-            outFile << "\n";
-        } else {
-            outFile << ",";
-        }
-    }
-    outFile.close();
+    // std::ofstream outFile(outputHistogramPath);
+    // for (size_t i = 0; i < h_histogram.size(); ++i) {
+    //     outFile << h_histogram[i];
+    //     if ((i + 1) % num_bins == 0) {
+    //         outFile << "\n";
+    //     } else {
+    //         outFile << ",";
+    //     }
+    // }
+    // outFile.close();
 
     cudaFree(d_image);
     cudaFree(d_gx);
@@ -149,5 +192,5 @@ void computeHOG(const std::string& inputImagePath, const std::string& outputHist
     cudaFree(d_orientation);
     cudaFree(d_histogram);
 
-    std::cout << "HOG histograms saved to " << outputHistogramPath << "." << std::endl;
+    // std::cout << "HOG histograms saved to " << outputHistogramPath << "." << std::endl;
 }
