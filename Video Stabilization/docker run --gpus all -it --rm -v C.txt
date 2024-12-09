@@ -1,0 +1,5 @@
+docker run --gpus all -it --rm -v C:/Users/Gaurav/Desktop/video_processing:/workspace sha256:a2932bc32e8d56823eb0f0b793bf8406100d22718923471a6ac54507f00bd328
+dos2unix compile.sh 
+chmod +x compile.sh  
+./compile.sh 
+./video_stabilization
