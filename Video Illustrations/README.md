@@ -49,7 +49,7 @@ nvcc video_illustration_full.cu -o video_illustration_full `pkg-config --cflags 
 ```
 
 ## Profiling
-After execution, output video shall be output video consisting of applied Gaussian filters.
+After execution, output_video.avi shall be consisting of applied Gaussian filters.
 
 ## Outputs
 - `output_video.avi`: Result from CUDA mode.
